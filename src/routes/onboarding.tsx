@@ -1,46 +1,45 @@
-import type { Context } from 'hono'
-import { html } from 'hono/html'
-import { Script } from 'vite-ssr-components/hono'
-import { drizzle } from 'drizzle-orm/d1'
-import { eq } from 'drizzle-orm'
-import type { Env } from '@/types'
-import { patients } from '@/db/schema'
+import type { Context } from "hono";
+import { html } from "hono/html";
+import { Script } from "vite-ssr-components/hono";
+import type { Env } from "@/types";
 
 export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
-  const user = c.get('user')
-  if (!user) return c.redirect('/login')
+  const user = c.get("user");
+  if (!user) return c.redirect("/login");
 
-  // Load existing patient data from D1
-  const db = drizzle(c.env.DB)
-  const [existing] = await db.select().from(patients).where(eq(patients.userId, user.id)).limit(1)
+  // Load form state from the DO (single source of truth)
+  const id = c.env.SESSION_DO.idFromName(user.id);
+  const stub = c.env.SESSION_DO.get(id);
+  const res = await stub.fetch(new Request("http://do/state"));
+  const { form } = (await res.json()) as { ok: boolean; form: Record<string, string> };
 
   const p = {
-    fullName: existing?.fullName || user.name || '',
-    email: existing?.email || user.email || '',
-    phone: existing?.phone || '',
-    age: existing?.age?.toString() || '',
-    physical: existing?.physicalStatus || '',
-    mental: existing?.mentalStatus || '',
-  }
+    fullName: form?.fullName || user.name || "",
+    email: form?.email || user.email || "",
+    phone: form?.phone || "",
+    age: form?.age || "",
+    physical: form?.physical || "",
+    mental: form?.mental || "",
+  };
 
   return c.render(
     <>
       <nav class="nav">
         <div class="container row row-between">
-          <a href="/" class="nav-logo">A<span>í</span>ngel</a>
+          <a href="/" class="nav-logo">
+            A<span>í</span>ngel
+          </a>
           <div class="nav-links">
             <span class="text-secondary text-sm">{user.name}</span>
-            <button class="btn btn-ghost btn-sm" hx-post="/api/auth/logout">Sign Out</button>
+            <button class="btn btn-ghost btn-sm" hx-post="/api/auth/logout">
+              Sign Out
+            </button>
           </div>
         </div>
       </nav>
 
       {/* Main onboarding layout — connected via hx-ws */}
-      <div
-        class="onboard-layout"
-        hx-ext="ws"
-        hx-ws:connect="/api/session/ws"
-      >
+      <div class="onboard-layout" hx-ext="ws" hx-ws:connect="/api/session/ws">
         {/* ── Left: Avatar Stage ── */}
         <div class="avatar-stage">
           <div class="avatar-frame">
@@ -61,10 +60,17 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
 
           {/* Voice controls */}
           <div class="voice-controls">
-            <button id="voice-start-btn" class="btn btn-primary btn-lg voice-btn">
+            <button
+              id="voice-start-btn"
+              class="btn btn-primary btn-lg voice-btn"
+            >
               <span class="mic-icon">◉</span> Start Voice Session
             </button>
-            <button id="voice-stop-btn" class="btn btn-ghost btn-lg voice-btn" style="display: none;">
+            <button
+              id="voice-stop-btn"
+              class="btn btn-ghost btn-lg voice-btn"
+              style="display: none;"
+            >
               ◼ End Session
             </button>
           </div>
@@ -85,12 +91,16 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
         <aside class="form-panel">
           <div class="form-panel-header">
             <h3>Patient Profile</h3>
-            <p class="text-secondary text-sm">Fields fill automatically as you speak</p>
+            <p class="text-secondary text-sm">
+              Fields fill automatically as you speak
+            </p>
           </div>
 
           <div id="onboarding-form" class="onboard-fields">
             <div class="form-group">
-              <label class="form-label">Full Name <span class="required">*</span></label>
+              <label class="form-label">
+                Full Name <span class="required">*</span>
+              </label>
               <input
                 class="form-input field-input"
                 type="text"
@@ -235,14 +245,18 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
         }
 
         .avatar-stage::before {
-          content: '';
+          content: "";
           position: absolute;
           top: 20%;
           left: 50%;
           transform: translateX(-50%);
           width: 500px;
           height: 500px;
-          background: radial-gradient(ellipse, var(--amber-soft) 0%, transparent 70%);
+          background: radial-gradient(
+            ellipse,
+            var(--amber-soft) 0%,
+            transparent 70%
+          );
           pointer-events: none;
           animation: breathe 8s ease-in-out infinite;
         }
@@ -332,9 +346,15 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
           letter-spacing: 0.08em;
         }
 
-        .status-idle { color: var(--text-muted); }
-        .status-live { color: var(--sage); }
-        .status-complete { color: var(--amber); }
+        .status-idle {
+          color: var(--text-muted);
+        }
+        .status-live {
+          color: var(--sage);
+        }
+        .status-complete {
+          color: var(--amber);
+        }
 
         .voice-interim {
           font-size: 0.85rem;
@@ -364,7 +384,7 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
         }
 
         .transcript-user {
-          background: rgba(255,255,255,0.04);
+          background: rgba(255, 255, 255, 0.04);
           color: var(--text-secondary);
         }
 
@@ -382,8 +402,12 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
           opacity: 0.6;
         }
 
-        .transcript-user .transcript-role { color: var(--text-muted); }
-        .transcript-agent .transcript-role { color: var(--amber); }
+        .transcript-user .transcript-role {
+          color: var(--text-muted);
+        }
+        .transcript-agent .transcript-role {
+          color: var(--amber);
+        }
 
         /* ── Form Panel (Right) ── */
         .form-panel {
@@ -446,9 +470,13 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
           margin-bottom: 1rem;
         }
 
-        .form-error-banner:empty { display: none; }
+        .form-error-banner:empty {
+          display: none;
+        }
 
-        .required { color: var(--rose); }
+        .required {
+          color: var(--rose);
+        }
 
         .submit-success {
           background: var(--sage-soft);
@@ -485,6 +513,6 @@ export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {
         }
       </style>`}
     </>,
-    { title: 'Onboarding — Aíngel' }
-  )
-}
+    { title: "Onboarding — Aíngel" },
+  );
+};

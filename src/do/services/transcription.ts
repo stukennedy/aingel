@@ -2,6 +2,8 @@ import { connectWebSocketUpgrade } from '@/utils/ws-upgrade';
 
 export interface TranscriptionCallbacks {
   onTranscript: (text: string, isFinal: boolean, turnOrder: number) => void;
+  /** Fires on is_final segments before speech_final — use for eager/speculative processing */
+  onEagerEndOfTurn?: (text: string, turnOrder: number) => void;
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
 }
@@ -85,6 +87,10 @@ export class TranscriptionService {
 
       if (isFinal) {
         this.currentTranscript += (this.currentTranscript ? ' ' : '') + transcript;
+        // Eager EOT: segment is final but utterance may continue — speculative processing
+        if (this.currentTranscript) {
+          this.callbacks?.onEagerEndOfTurn?.(this.currentTranscript, this.currentTurnOrder);
+        }
       }
 
       // Send interim updates

@@ -154,6 +154,7 @@ export class SessionDO implements DurableObject {
       (form as any)[field] = value;
       await this.saveState();
       this.broadcastFieldUpdate(field as keyof FormState, value);
+      this.saveToD1().catch(() => {});
       return Response.json({ ok: true, field, value });
     }
 
@@ -239,6 +240,7 @@ export class SessionDO implements DurableObject {
             (form as any)[data.field] = data.value ?? '';
             await this.saveState();
             this.broadcastFieldUpdate(data.field as keyof FormState, data.value ?? '');
+            this.saveToD1().catch(() => {});
           }
           break;
 
@@ -349,6 +351,14 @@ export class SessionDO implements DurableObject {
           this.broadcastUI('#voice-interim', this.esc(text));
         }
       },
+      onEagerEndOfTurn: (text, _turnOrder) => {
+        // Speculatively generate a response with the lite model
+        if (this.llm && !this.agentSpeaking) {
+          this.loadState().then((form) => {
+            this.llm?.prepareEagerReply(text, { ...form });
+          });
+        }
+      },
       onSpeechStart: () => {
         this.broadcastUI('#voice-interim', '');
       },
@@ -368,6 +378,8 @@ export class SessionDO implements DurableObject {
           (form as any)[field] = value;
           await this.saveState();
           this.broadcastFieldUpdate(field as keyof FormState, value);
+          // Persist to D1 in background so page refresh shows latest data
+          this.saveToD1().catch(() => {});
         }
       },
       completeOnboarding: async () => {

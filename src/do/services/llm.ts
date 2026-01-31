@@ -1,5 +1,5 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { streamText, tool, type CoreMessage, jsonSchema } from 'ai';
+import { streamText, generateText, tool, type CoreMessage, jsonSchema } from 'ai';
 
 const SYSTEM_PROMPT = `You are Aíngel (pronounced "angel"), a warm AI companion speaking directly to an elderly patient to help fill in their care profile.
 
@@ -35,6 +35,12 @@ export class LLMService {
   private textDeltaCallback: TextDeltaCallback | null = null;
   private toolContext: LLMToolContext | null = null;
 
+  // Eager response state
+  private eagerAbortController: AbortController | null = null;
+  private eagerReply: string | null = null;
+  private eagerTranscript: string | null = null;
+  private eagerPromise: Promise<void> | null = null;
+
   constructor(private apiKey: string) {}
 
   setTextDeltaCallback(cb: TextDeltaCallback | null) {
@@ -47,6 +53,18 @@ export class LLMService {
 
   abortCurrent() {
     try { this.currentAbortController?.abort(); } catch {}
+  }
+
+  private abortEager() {
+    try { this.eagerAbortController?.abort(); } catch {}
+    this.eagerAbortController = null;
+    this.eagerPromise = null;
+  }
+
+  private buildFormContext(formState: Record<string, string>): string {
+    const filled = Object.entries(formState).filter(([_, v]) => v).map(([k, v]) => `${k}: ${v}`);
+    const empty = Object.entries(formState).filter(([_, v]) => !v).map(([k]) => k);
+    return `\n\nCurrent form state:\nFilled: ${filled.length ? filled.join(', ') : 'none'}\nStill needed: ${empty.join(', ')}`;
   }
 
   private buildTools() {
@@ -62,9 +80,9 @@ export class LLMService {
           },
           required: ['field', 'value'],
         }),
-        execute: async ({ field, value }: { field: string; value: string }) => {
+        execute: async (args: any) => {
+          const { field, value } = args as { field: string; value: string };
           console.log('[LLM] fill_field:', field, '=', value);
-          // Fire-and-forget — don't block text generation while form updates
           if (ctx) ctx.updateField(field, value).catch((e) => console.error('[LLM] fill_field error:', e));
           return `Done.`;
         },
@@ -87,115 +105,231 @@ export class LLMService {
     };
   }
 
+  /**
+   * Speculatively generate a text-only response using the lite model.
+   * Called on eager end-of-turn (is_final before speech_final).
+   * Result is cached and used if the transcript matches at confirmed EOT.
+   */
+  prepareEagerReply(transcript: string, formState: Record<string, string>): void {
+    // Abort any previous eager generation
+    this.abortEager();
+
+    this.eagerTranscript = transcript;
+    this.eagerReply = null;
+
+    const abortController = new AbortController();
+    this.eagerAbortController = abortController;
+
+    this.eagerPromise = (async () => {
+      try {
+        const model = createGoogleGenerativeAI({ apiKey: this.apiKey })('gemini-2.5-flash-lite');
+        const formContext = this.buildFormContext(formState);
+
+        const eagerMessages: CoreMessage[] = [
+          ...this.messages,
+          { role: 'user', content: transcript },
+        ];
+
+        console.log('[LLM-Lite] Eager generation for:', transcript.slice(0, 60));
+
+        const result = await generateText({
+          model,
+          system: SYSTEM_PROMPT + formContext,
+          messages: eagerMessages,
+          temperature: 0.6,
+          abortSignal: abortController.signal as any,
+        });
+
+        // Only cache if not aborted and transcript still matches
+        if (this.eagerTranscript === transcript) {
+          this.eagerReply = result.text;
+          console.log('[LLM-Lite] Eager reply ready:', result.text.slice(0, 80));
+        }
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') {
+          console.error('[LLM-Lite] Eager generation error:', e?.message || e);
+        }
+      } finally {
+        this.eagerPromise = null;
+      }
+    })();
+  }
+
+  /**
+   * Generate the full response. If an eager reply is available and the transcript
+   * matches, stream that immediately and then run tool-calling with the full model.
+   */
   async generateReply(userTranscript: string, turnOrder: number, formState: Record<string, string>, sendMessage: (data: any) => void) {
     try {
       this.messages.push({ role: 'user', content: userTranscript });
-
       if (this.messages.length > 16) {
         this.messages = this.messages.slice(-16);
       }
 
-      // Build form context from current state
-      const filled = Object.entries(formState).filter(([_, v]) => v).map(([k, v]) => `${k}: ${v}`);
-      const empty = Object.entries(formState).filter(([_, v]) => !v).map(([k]) => k);
-      const formContext = `\n\nCurrent form state:\nFilled: ${filled.length ? filled.join(', ') : 'none'}\nStill needed: ${empty.join(', ')}`;
+      const formContext = this.buildFormContext(formState);
 
-      const model = createGoogleGenerativeAI({ apiKey: this.apiKey })('gemini-2.0-flash');
-      const abortController = new AbortController();
-      this.currentAbortController = abortController;
-
-      const tools = this.buildTools();
-
-      console.log('[LLM] Starting streamText for turn', turnOrder, 'transcript:', userTranscript);
-      console.log('[LLM] Message count:', this.messages.length);
-
-      const result = streamText({
-        model,
-        system: SYSTEM_PROMPT + formContext,
-        messages: this.messages,
-        temperature: 0.6,
-        tools,
-        maxSteps: 5,
-        abortSignal: abortController.signal as any,
-        onStepFinish: ({ text, toolCalls, toolResults }) => {
-          console.log('[LLM] Step finished:', {
-            textLen: text.length,
-            toolCalls: toolCalls?.length ?? 0,
-            toolResults: toolResults?.length ?? 0,
-          });
-        },
-      });
-
-      let reply = '';
-      let started = false;
-
-      try {
-        // Use fullStream to see everything (text, tool calls, errors, etc.)
-        for await (const part of result.fullStream) {
-          console.log('[LLM] Stream part:', part.type);
-
-          if (part.type === 'text-delta' && part.textDelta) {
-            if (!started) {
-              started = true;
-              sendMessage({ type: 'ai_turn_start', turnOrder });
-            }
-
-            reply += part.textDelta;
-
-            if (this.textDeltaCallback) {
-              this.textDeltaCallback(part.textDelta, false, turnOrder);
-            }
-            sendMessage({ type: 'text_delta', text: part.textDelta, isEnd: false, turnOrder });
-          } else if (part.type === 'tool-call') {
-            console.log('[LLM] Tool call:', part.toolName, JSON.stringify(part.args));
-          } else if (part.type === 'tool-result') {
-            console.log('[LLM] Tool result:', part.toolName, typeof part.result === 'string' ? part.result.slice(0, 100) : part.result);
-          } else if (part.type === 'error') {
-            console.error('[LLM] Stream error part:', part.error);
-          } else if (part.type === 'step-finish') {
-            console.log('[LLM] Step finish:', {
-              finishReason: part.finishReason,
-              isContinued: part.isContinued,
-            });
-          } else if (part.type === 'finish') {
-            console.log('[LLM] Finish:', { finishReason: part.finishReason });
-          }
-        }
-      } catch (e: any) {
-        if (e?.name === 'AbortError') {
-          console.log('[LLM] Generation aborted', { turnOrder });
-        } else {
-          console.error('[LLM] Stream iteration error:', e?.message || e);
-          throw e;
-        }
-      } finally {
-        this.currentAbortController = null;
+      // If eager generation is in-flight for this transcript, wait for it (with timeout)
+      if (this.eagerPromise && this.eagerTranscript === userTranscript) {
+        console.log('[LLM] Waiting for in-flight eager generation...');
+        await Promise.race([this.eagerPromise, new Promise(r => setTimeout(r, 3000))]);
+      } else {
+        // Transcript changed or no eager — abort any stale eager
+        this.abortEager();
       }
 
-      // Final delta
-      sendMessage({ type: 'text_delta', text: '', isEnd: true, turnOrder });
-      if (this.textDeltaCallback) {
-        this.textDeltaCallback('', true, turnOrder);
-      }
+      // Check if we have a usable eager reply
+      const hasEagerReply = this.eagerReply && this.eagerTranscript === userTranscript;
+      const eagerText = hasEagerReply ? this.eagerReply! : null;
+      this.eagerReply = null;
+      this.eagerTranscript = null;
+      this.eagerPromise = null;
 
-      // Record assistant response in history
-      if (reply) {
-        this.messages.push({ role: 'assistant', content: reply });
+      if (eagerText) {
+        // Stream the pre-computed eager reply immediately
+        console.log('[LLM] Using eager reply:', eagerText.slice(0, 80));
+        sendMessage({ type: 'ai_turn_start', turnOrder });
+        sendMessage({ type: 'text_delta', text: eagerText, isEnd: false, turnOrder });
+        if (this.textDeltaCallback) {
+          this.textDeltaCallback(eagerText, false, turnOrder);
+        }
+        sendMessage({ type: 'text_delta', text: '', isEnd: true, turnOrder });
+        if (this.textDeltaCallback) {
+          this.textDeltaCallback('', true, turnOrder);
+        }
+
+        // Record in history
+        this.messages.push({ role: 'assistant', content: eagerText });
         if (this.messages.length > 16) {
           this.messages = this.messages.slice(-16);
         }
+
+        sendMessage({ type: 'ai_turn', turnOrder, text: eagerText });
+        console.log('[LLM] Eager reply sent, now running tool pass');
+
+        // Run tool-calling pass with the full model (non-streaming, fire-and-forget for tools)
+        this.runToolPass(userTranscript, formContext);
+        return;
       }
 
-      sendMessage({ type: 'ai_turn', turnOrder, text: reply });
-
-      console.log('[LLM] Reply complete', { turnOrder, len: reply.length, reply: reply.slice(0, 100) });
+      // No eager reply available — full streaming generation with the main model
+      console.log('[LLM] No eager reply, full generation for turn', turnOrder);
+      await this.streamFullReply(userTranscript, turnOrder, formContext, sendMessage);
     } catch (error) {
       console.error('[LLM] generateReply failed:', error);
       sendMessage({ type: 'ai_turn', turnOrder, text: '[Error generating response]' });
     }
   }
 
+  /**
+   * Full streaming reply with tools — used when no eager reply is available.
+   */
+  private async streamFullReply(userTranscript: string, turnOrder: number, formContext: string, sendMessage: (data: any) => void) {
+    const model = createGoogleGenerativeAI({ apiKey: this.apiKey })('gemini-2.0-flash');
+    const abortController = new AbortController();
+    this.currentAbortController = abortController;
+
+    const tools = this.buildTools();
+
+    console.log('[LLM] Starting streamText for turn', turnOrder, 'transcript:', userTranscript);
+
+    const result = streamText({
+      model,
+      system: SYSTEM_PROMPT + formContext,
+      messages: this.messages,
+      temperature: 0.6,
+      tools,
+      maxSteps: 5,
+      abortSignal: abortController.signal as any,
+    });
+
+    let reply = '';
+    let started = false;
+
+    try {
+      for await (const part of result.fullStream) {
+        if (part.type === 'text-delta' && part.textDelta) {
+          if (!started) {
+            started = true;
+            sendMessage({ type: 'ai_turn_start', turnOrder });
+          }
+          reply += part.textDelta;
+          if (this.textDeltaCallback) {
+            this.textDeltaCallback(part.textDelta, false, turnOrder);
+          }
+          sendMessage({ type: 'text_delta', text: part.textDelta, isEnd: false, turnOrder });
+        } else if (part.type === 'tool-call') {
+          console.log('[LLM] Tool call:', part.toolName, JSON.stringify(part.args));
+        } else if (part.type === 'tool-result') {
+          console.log('[LLM] Tool result:', part.toolName, typeof part.result === 'string' ? part.result.slice(0, 100) : part.result);
+        } else if (part.type === 'error') {
+          console.error('[LLM] Stream error part:', part.error);
+        }
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        console.log('[LLM] Generation aborted', { turnOrder });
+      } else {
+        console.error('[LLM] Stream iteration error:', e?.message || e);
+        throw e;
+      }
+    } finally {
+      this.currentAbortController = null;
+    }
+
+    sendMessage({ type: 'text_delta', text: '', isEnd: true, turnOrder });
+    if (this.textDeltaCallback) {
+      this.textDeltaCallback('', true, turnOrder);
+    }
+
+    if (reply) {
+      this.messages.push({ role: 'assistant', content: reply });
+      if (this.messages.length > 16) {
+        this.messages = this.messages.slice(-16);
+      }
+    }
+
+    sendMessage({ type: 'ai_turn', turnOrder, text: reply });
+    console.log('[LLM] Reply complete', { turnOrder, len: reply.length });
+  }
+
+  /**
+   * Background tool-calling pass with the full model.
+   * Runs after eager reply has been sent — processes any tool calls
+   * (form filling, completion) without generating more speech text.
+   */
+  private async runToolPass(userTranscript: string, formContext: string) {
+    try {
+      const model = createGoogleGenerativeAI({ apiKey: this.apiKey })('gemini-2.0-flash');
+      const tools = this.buildTools();
+
+      // Ask the full model to process tool calls only, given the conversation so far
+      const toolMessages: CoreMessage[] = [
+        ...this.messages,
+        {
+          role: 'user',
+          content: `[SYSTEM: You already responded to the user with spoken text. Now determine if any tool calls are needed based on the user's message: "${userTranscript}". If no tools are needed, respond with just "ok". Do NOT generate spoken text — only call tools if appropriate.]`,
+        },
+      ];
+
+      console.log('[LLM-Tools] Running tool pass for:', userTranscript.slice(0, 60));
+
+      const result = await generateText({
+        model,
+        system: SYSTEM_PROMPT + formContext,
+        messages: toolMessages,
+        temperature: 0.3,
+        tools,
+        maxSteps: 5,
+      });
+
+      console.log('[LLM-Tools] Tool pass complete, tool calls:', result.toolCalls?.length ?? 0);
+    } catch (e: any) {
+      console.error('[LLM-Tools] Tool pass error:', e?.message || e);
+    }
+  }
+
   disconnect() {
     this.abortCurrent();
+    this.abortEager();
   }
 }
