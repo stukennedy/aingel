@@ -29,5 +29,5 @@ export const onRequestPost = async (c: Context<{ Bindings: Env }>) => {
   // Return updated state
   const stateRes = await stub.fetch(new Request('http://do/state'))
   const state = await stateRes.json()
-  return c.json({ ok: true, updated: results, ...state })
+  return c.json({ ok: true, updated: results, ...(state as Record<string, unknown>) })
 }

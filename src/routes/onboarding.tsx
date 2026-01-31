@@ -1,5 +1,6 @@
 import type { Context } from 'hono'
 import { html } from 'hono/html'
+import { Script } from 'vite-ssr-components/hono'
 import type { Env } from '@/types'
 
 export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
@@ -163,10 +164,10 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
             <video id="anam-video" style="display: none; width: 320px; height: 320px; border-radius: 1rem; margin: 0 auto 1rem; object-fit: cover;" autoplay playsinline></video>
 
             <div style="display: flex; gap: 0.75rem; justify-content: center;">
-              <button id="voice-start-btn" class="btn btn-primary btn-lg" onclick="window.__startVoice()">
+              <button id="voice-start-btn" class="btn btn-primary btn-lg">
                 🎙️ Start Voice Session
               </button>
-              <button id="voice-stop-btn" class="btn btn-ghost btn-lg" style="display: none;" onclick="window.__stopVoice()">
+              <button id="voice-stop-btn" class="btn btn-ghost btn-lg" style="display: none;">
                 ⏹ Stop
               </button>
             </div>
@@ -178,20 +179,7 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
             <div id="voice-transcript" style="display: none; margin-top: 1rem; max-height: 200px; overflow-y: auto; text-align: left; background: rgba(0,0,0,0.05); border-radius: 0.5rem; padding: 0.75rem; font-size: 0.9rem; line-height: 1.6;"></div>
           </div>
 
-          {html`<script type="module">
-            import { start, stop, isRunning } from '/js/anam-session.js';
-            window.__startVoice = async () => {
-              document.getElementById('voice-start-btn').style.display = 'none';
-              document.getElementById('voice-stop-btn').style.display = 'inline-flex';
-              document.getElementById('voice-transcript').style.display = 'block';
-              await start();
-            };
-            window.__stopVoice = () => {
-              stop();
-              document.getElementById('voice-start-btn').style.display = 'inline-flex';
-              document.getElementById('voice-stop-btn').style.display = 'none';
-            };
-          </script>`}
+          <Script type="module" src="/src/client/onboarding.ts" />
         </div>
       </div>
 

@@ -1,9 +1,11 @@
 {
   "name": "aingel-cf",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "vite dev --host 0.0.0.0 --port 8787",
+    "build": "vite build",
+    "deploy": "vite build && wrangler deploy",
     "routes": "bunx hono-router src/routes src/router.ts --watch",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply aingel-db --local",
@@ -11,16 +13,20 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^1",
+    "@anam-ai/js-sdk": "^4.8.0",
     "ai": "^4",
     "drizzle-orm": "^0.38",
     "hono": "^4",
+    "vite-ssr-components": "^0.5.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.22.1",
     "@cloudflare/workers-types": "^4",
     "drizzle-kit": "^0.30",
     "hono-router": "latest",
     "typescript": "^5",
+    "vite": "^7.3.1",
     "wrangler": "^3"
   }
 }
