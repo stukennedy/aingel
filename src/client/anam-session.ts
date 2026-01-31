@@ -1,6 +1,8 @@
 /**
  * Anam Session - Client orchestrator for voice onboarding
- * Connects to Anam for avatar rendering/TTS and our voice agent for STT/LLM
+ * Manages Anam avatar (video rendering + TTS) and AudioCapture (mic → server).
+ * WebSocket is managed externally by HTMX hx-ws; this class receives voice
+ * channel messages via public methods.
  */
 
 import { createClient, AnamEvent } from '@anam-ai/js-sdk';
@@ -13,36 +15,16 @@ export type SessionStatus = 'disconnected' | 'connecting' | 'connected' | 'error
 
 export interface SessionCallbacks {
   onStatusChange?: (status: SessionStatus) => void;
-  onUserTranscript?: (text: string) => void;
-  onAgentText?: (text: string) => void;
-  onFieldUpdated?: (field: string, value: string) => void;
-  onComplete?: () => void;
   onError?: (error: Error) => void;
-}
-
-interface ServerMessage {
-  type: string;
-  text?: string;
-  isEnd?: boolean;
-  turnOrder?: number;
-  timestamp?: number;
-  error?: string;
-  message?: string;
-  sampleRate?: number;
-  field?: string;
-  value?: string;
 }
 
 export class AnamSession {
   private anamClient: AnamClient | null = null;
-  private ws: WebSocket | null = null;
-  private talkStream: TalkMessageStream | null = null;
   private audioCapture: AudioCapture | null = null;
+  private talkStream: TalkMessageStream | null = null;
   private status: SessionStatus = 'disconnected';
   private callbacks: SessionCallbacks = {};
   private currentAgentText = '';
-  private pendingMicDeviceId?: string;
-  private sampleRate: number = 16000;
   private ttsStartTime: number | null = null;
   private static readonly TTS_MS_PER_CHAR = 80;
 
@@ -50,17 +32,17 @@ export class AnamSession {
     this.callbacks = callbacks || {};
   }
 
-  async connect(videoElementId: string, microphoneDeviceId?: string): Promise<void> {
-    if (this.status === 'connecting' || this.status === 'connected') {
-      console.warn('[AnamSession] Already connecting or connected');
-      return;
-    }
+  /**
+   * Connect to Anam avatar only (video + TTS).
+   * Does NOT establish the server WebSocket — that's handled by HTMX hx-ws.
+   */
+  async connect(videoElementId: string): Promise<void> {
+    if (this.status === 'connecting' || this.status === 'connected') return;
 
     this.setStatus('connecting');
 
     try {
       // 1. Get session token
-      console.log('[AnamSession] Fetching session token...');
       const tokenResponse = await fetch('/api/anam-token', { method: 'POST' });
       if (!tokenResponse.ok) {
         throw new Error(`Failed to get session token: ${tokenResponse.status}`);
@@ -72,37 +54,16 @@ export class AnamSession {
       }
 
       // 2. Initialize Anam client
-      console.log('[AnamSession] Initializing Anam client...');
       this.anamClient = createClient(data.sessionToken);
 
-      // 3. Set up Anam event listeners
+      // 3. Event listeners
       this.anamClient.addListener(AnamEvent.CONNECTION_ESTABLISHED, () => {
         console.log('[AnamSession] Anam connection established');
       });
 
-      this.anamClient.addListener(AnamEvent.SESSION_READY, () => {
-        console.log('[AnamSession] Anam session ready');
-      });
-
       this.anamClient.addListener(AnamEvent.TALK_STREAM_INTERRUPTED, () => {
-        let heardText: string | undefined;
-        if (this.ttsStartTime && this.currentAgentText) {
-          const elapsedMs = Date.now() - this.ttsStartTime;
-          const estimatedChars = Math.floor(elapsedMs / AnamSession.TTS_MS_PER_CHAR);
-          heardText = this.currentAgentText.slice(0, estimatedChars);
-        }
         this.talkStream = null;
         this.ttsStartTime = null;
-        this.sendToServer({
-          type: 'anam_tts_interrupted',
-          timestamp: Date.now(),
-          heardText,
-          fullText: this.currentAgentText || undefined,
-        });
-      });
-
-      this.anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, () => {
-        this.sendToServer({ type: 'anam_tts_ended', timestamp: Date.now() });
       });
 
       this.anamClient.addListener(AnamEvent.CONNECTION_CLOSED, () => {
@@ -114,15 +75,11 @@ export class AnamSession {
       // 4. Start streaming to video element (null = no mic access by Anam)
       await this.anamClient.streamToVideoElement(videoElementId, null as any);
 
-      // 5. Mute Anam's input audio — we handle STT ourselves
+      // 5. Mute Anam's input audio — we handle STT ourselves via Deepgram
       this.anamClient.muteInputAudio();
 
-      // 6. Connect to voice agent WebSocket
-      this.pendingMicDeviceId = microphoneDeviceId;
-      await this.connectWebSocket();
-
       this.setStatus('connected');
-      console.log('[AnamSession] Fully connected');
+      console.log('[AnamSession] Anam connected');
     } catch (error) {
       console.error('[AnamSession] Connection failed:', error);
       this.setStatus('error');
@@ -132,118 +89,25 @@ export class AnamSession {
     }
   }
 
-  private connectWebSocket(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${proto}//${window.location.host}/api/session/ws`;
+  /**
+   * Called when server signals voice pipeline is ready.
+   * Starts mic audio capture and sends binary chunks to the server WebSocket.
+   */
+  onServicesReady(ws: WebSocket, sampleRate: number): void {
+    if (this.audioCapture) return;
 
-      this.ws = new WebSocket(url);
-
-      const timeout = setTimeout(() => reject(new Error('WebSocket timeout')), 10000);
-
-      this.ws.onopen = () => {
-        clearTimeout(timeout);
-        this.ws!.send(JSON.stringify({ type: 'hello', mode: 'anam' }));
-        resolve();
-      };
-
-      this.ws.onmessage = (event) => this.handleServerMessage(event);
-
-      this.ws.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error('WebSocket connection error'));
-      };
-
-      this.ws.onclose = () => {
-        if (this.status === 'connected') {
-          this.disconnect();
-        }
-      };
+    this.audioCapture = new AudioCapture(ws, sampleRate);
+    this.audioCapture.start().catch((err) => {
+      console.error('[AnamSession] Audio capture failed:', err);
+      this.callbacks.onError?.(err);
     });
   }
 
-  private handleServerMessage(event: MessageEvent): void {
-    if (event.data instanceof ArrayBuffer || event.data instanceof Blob) return;
-    if (typeof event.data !== 'string') return;
-
-    try {
-      const msg: ServerMessage = JSON.parse(event.data);
-
-      switch (msg.type) {
-        case 'services_ready':
-          console.log('[AnamSession] Services ready, sampleRate:', msg.sampleRate);
-          if (msg.sampleRate) this.sampleRate = msg.sampleRate;
-          this.startAudioCapture();
-          break;
-
-        case 'text_delta':
-          this.handleTextDelta(msg.text || '', msg.isEnd || false);
-          break;
-
-        case 'start_of_turn':
-          // User started speaking — interrupt avatar
-          if (this.ttsStartTime && this.currentAgentText) {
-            const elapsedMs = Date.now() - this.ttsStartTime;
-            const estimatedChars = Math.floor(elapsedMs / AnamSession.TTS_MS_PER_CHAR);
-            this.sendToServer({
-              type: 'anam_tts_interrupted',
-              timestamp: Date.now(),
-              heardText: this.currentAgentText.slice(0, estimatedChars),
-              fullText: this.currentAgentText,
-            });
-          }
-          this.anamClient?.interruptPersona();
-          this.talkStream = null;
-          this.ttsStartTime = null;
-          this.currentAgentText = '';
-          break;
-
-        case 'user_turn':
-          this.callbacks.onUserTranscript?.(msg.text || '');
-          break;
-
-        case 'ai_turn_start':
-          this.currentAgentText = '';
-          break;
-
-        case 'ai_turn':
-          // Full AI response complete
-          break;
-
-        case 'field_updated':
-          if (msg.field && msg.value !== undefined) {
-            this.callbacks.onFieldUpdated?.(msg.field, msg.value);
-          }
-          break;
-
-        case 'onboarding_complete':
-          this.callbacks.onComplete?.();
-          break;
-
-        case 'error':
-          console.error('[AnamSession] Server error:', msg.error || msg.message);
-          this.callbacks.onError?.(new Error(msg.error || msg.message || 'Unknown error'));
-          break;
-      }
-    } catch (error) {
-      console.warn('[AnamSession] Failed to parse message:', error);
-    }
-  }
-
-  private async startAudioCapture(): Promise<void> {
-    if (this.audioCapture || !this.ws) return;
-
-    try {
-      this.audioCapture = new AudioCapture(this.ws, this.sampleRate);
-      await this.audioCapture.start(this.pendingMicDeviceId);
-      this.pendingMicDeviceId = undefined;
-    } catch (error) {
-      console.error('[AnamSession] Failed to start audio capture:', error);
-      this.callbacks.onError?.(error as Error);
-    }
-  }
-
-  private handleTextDelta(text: string, isEnd: boolean): void {
+  /**
+   * Called when server sends a text_delta (LLM streaming response).
+   * Streams text to Anam avatar for TTS.
+   */
+  handleTextDelta(text: string, isEnd: boolean): void {
     if (!this.anamClient) return;
 
     if (!this.talkStream) {
@@ -255,7 +119,6 @@ export class AnamSession {
     if (this.talkStream.isActive()) {
       this.talkStream.streamMessageChunk(text, isEnd);
       this.currentAgentText += text;
-      if (text) this.callbacks.onAgentText?.(this.currentAgentText);
     }
 
     if (isEnd) {
@@ -273,12 +136,6 @@ export class AnamSession {
     return this.status;
   }
 
-  private sendToServer(data: Record<string, unknown>): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data));
-    }
-  }
-
   disconnect(): void {
     if (this.status === 'disconnected') return;
 
@@ -288,13 +145,6 @@ export class AnamSession {
     if (this.audioCapture) {
       this.audioCapture.stop();
       this.audioCapture = null;
-    }
-
-    if (this.ws) {
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.close(1000, 'Client disconnecting');
-      }
-      this.ws = null;
     }
 
     if (this.anamClient) {
