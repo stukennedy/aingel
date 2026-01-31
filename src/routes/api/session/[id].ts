@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import type { Env } from '../../../types'
+import type { Env } from '@/types'
 
 // GET /api/session/:id — debug endpoint to view DO form state
 export const onRequestGet = async (c: Context<{ Bindings: Env }>) => {

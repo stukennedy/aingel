@@ -1,56 +1,46 @@
-import type { Context } from 'hono'
-import { streamSSE } from 'hono/streaming'
+import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
-import type { Env } from '../../../types'
-import { users } from '../../../db/schema'
-import { hashPassword, createSession } from '../../../lib/auth'
+import { users } from '@/db/schema'
+import { hashPassword, createSession } from '@/lib/auth'
+import { factory, softValidator, getValidation } from '@/utils/soft-validator'
 
-export const onRequestPost = async (c: Context<{ Bindings: Env }>) => {
-  const { email, password } = await c.req.json()
+const loginSchema = z.object({
+  email: z.string().min(1, 'Email is required').email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
+})
 
-  if (!email || !password) {
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'datastar-merge-signals',
-        data: `signals ${JSON.stringify({ error: 'Email and password are required.' })}`
-      })
+export const onRequestPost = factory.createHandlers(
+  softValidator('form', loginSchema),
+  async (c) => {
+    const validation = getValidation<z.infer<typeof loginSchema>>(c, 'form')
+
+    if (!validation.success) {
+      const msg = validation.error?.issues[0]?.message || 'Validation failed'
+      return c.html(msg)
+    }
+
+    const { email, password } = validation.data
+    const db = drizzle(c.env.DB)
+    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1)
+
+    if (!user) {
+      return c.html('Invalid email or password.')
+    }
+
+    const hash = await hashPassword(password)
+    if (hash !== user.passwordHash) {
+      return c.html('Invalid email or password.')
+    }
+
+    await createSession(c, {
+      id: user.id,
+      email: user.email,
+      name: user.name ?? '',
+      role: user.role ?? 'user',
     })
-  }
 
-  const db = drizzle(c.env.DB)
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1)
-
-  if (!user) {
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'datastar-merge-signals',
-        data: `signals ${JSON.stringify({ error: 'Invalid email or password.' })}`
-      })
-    })
-  }
-
-  const hash = await hashPassword(password)
-  if (hash !== user.passwordHash) {
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'datastar-merge-signals',
-        data: `signals ${JSON.stringify({ error: 'Invalid email or password.' })}`
-      })
-    })
-  }
-
-  await createSession(c, {
-    id: user.id,
-    email: user.email,
-    name: user.name ?? '',
-    role: user.role ?? 'user',
-  })
-
-  return streamSSE(c, async (stream) => {
-    await stream.writeSSE({
-      event: 'datastar-execute-script',
-      data: `script window.location.href = '/onboarding'`
-    })
-  })
-}
+    c.header('HX-Redirect', '/onboarding')
+    return c.body(null)
+  },
+)

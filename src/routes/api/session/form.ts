@@ -1,60 +1,48 @@
-import type { Context } from 'hono'
-import { streamSSE } from 'hono/streaming'
-import type { Env } from '../../../types'
+import { z } from 'zod'
+import type { Env } from '@/types'
+import { factory, softValidator, getValidation } from '@/utils/soft-validator'
 
-// POST /api/session/form — update a form field via DO, return SSE
-export const onRequestPost = async (c: Context<{ Bindings: Env }>) => {
-  const user = c.get('user')
-  if (!user) {
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'datastar-merge-signals',
-        data: `signals ${JSON.stringify({ formError: 'Not authenticated' })}`
-      })
-    })
-  }
+const formFieldSchema = z.object({
+  field: z.string().min(1, 'Missing field name'),
+  fullName: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  age: z.string().optional(),
+  physical: z.string().optional(),
+  mental: z.string().optional(),
+})
 
-  const { field, value } = await c.req.json()
-  if (!field) {
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'datastar-merge-signals',
-        data: `signals ${JSON.stringify({ formError: 'Missing field name' })}`
-      })
-    })
-  }
+export const onRequestPost = factory.createHandlers(
+  softValidator('form', formFieldSchema),
+  async (c) => {
+    const user = c.get('user')
+    if (!user) {
+      return c.html('Not authenticated')
+    }
 
-  const id = c.env.SESSION_DO.idFromName(user.id)
-  const stub = c.env.SESSION_DO.get(id)
-  const res = await stub.fetch(new Request('http://do/field', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ field, value: value ?? '' }),
-  }))
-  const result = await res.json() as { ok: boolean; error?: string }
+    const validation = getValidation<z.infer<typeof formFieldSchema>>(c, 'form')
 
-  if (!result.ok) {
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'datastar-merge-signals',
-        data: `signals ${JSON.stringify({ formError: result.error ?? 'Update failed' })}`
-      })
-    })
-  }
+    if (!validation.success) {
+      const msg = validation.error?.issues[0]?.message || 'Validation failed'
+      return c.html(msg)
+    }
 
-  return streamSSE(c, async (stream) => {
-    await stream.writeSSE({
-      event: 'datastar-merge-signals',
-      data: `signals ${JSON.stringify({ formError: '', [`saved_${field}`]: true })}`
-    })
-    // Clear saved indicator after a moment (client-side)
-    await stream.writeSSE({
-      event: 'datastar-execute-script',
-      data: `script setTimeout(() => document.querySelector('#save-${field}')?.classList.remove('visible'), 1500)`
-    })
-    await stream.writeSSE({
-      event: 'datastar-merge-fragments',
-      data: `fragments <span id="save-${field}" class="save-indicator visible">✓ saved</span>`
-    })
-  })
-}
+    const { field } = validation.data
+    const value = (validation.data[field as keyof typeof validation.data] ?? '') as string
+
+    const id = c.env.SESSION_DO.idFromName(user.id)
+    const stub = c.env.SESSION_DO.get(id)
+    const res = await stub.fetch(new Request('http://do/field', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field, value }),
+    }))
+    const result = await res.json() as { ok: boolean; error?: string }
+
+    if (!result.ok) {
+      return c.html(result.error ?? 'Update failed')
+    }
+
+    return c.html(`<span id="save-${field}" class="save-indicator visible">✓ saved</span>`)
+  },
+)

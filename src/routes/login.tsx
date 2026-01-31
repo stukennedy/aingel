@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import type { Env } from '../types'
+import type { Env } from '@/types'
 
 export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
   const user = c.get('user')
@@ -15,8 +15,9 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
 
         <form
           class="auth-form"
-          data-signals='{"email": "", "password": "", "error": ""}'
-          data-on-submit__prevent="@post('/api/auth/login')"
+          hx-post="/api/auth/login"
+          hx-target="#auth-error"
+          hx-swap="innerHTML"
         >
           <div class="form-group">
             <label class="form-label" for="email">Email</label>
@@ -25,7 +26,6 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
               type="email"
               id="email"
               name="email"
-              data-bind="email"
               placeholder="you@example.com"
               required
               autocomplete="email"
@@ -39,14 +39,13 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
               type="password"
               id="password"
               name="password"
-              data-bind="password"
               placeholder="••••••••"
               required
               autocomplete="current-password"
             />
           </div>
 
-          <div id="auth-error" class="form-error" data-text="$error"></div>
+          <div id="auth-error" class="form-error"></div>
 
           <button type="submit" class="btn btn-primary btn-lg" style="width: 100%;">
             Sign In

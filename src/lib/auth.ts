@@ -1,6 +1,6 @@
 import { Context, MiddlewareHandler } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
-import type { Env, User } from '../types'
+import type { Env, User, HonoContext } from '@/types'
 
 const SESSION_TTL = 60 * 60 * 24 * 7 // 7 days
 
@@ -11,7 +11,7 @@ export async function hashPassword(password: string): Promise<string> {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-export async function createSession(c: Context<{ Bindings: Env }>, user: User): Promise<string> {
+export async function createSession(c: Context<HonoContext>, user: User): Promise<string> {
   const sessionId = crypto.randomUUID()
   await c.env.SESSIONS.put(
     `session:${sessionId}`,
@@ -28,7 +28,7 @@ export async function createSession(c: Context<{ Bindings: Env }>, user: User): 
   return sessionId
 }
 
-export async function destroySession(c: Context<{ Bindings: Env }>): Promise<void> {
+export async function destroySession(c: Context<HonoContext>): Promise<void> {
   const sessionId = getCookie(c, 'session')
   if (sessionId) {
     await c.env.SESSIONS.delete(`session:${sessionId}`)

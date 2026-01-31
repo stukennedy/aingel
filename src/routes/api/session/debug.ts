@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import type { Env } from '../../../types'
+import type { Env } from '@/types'
 
 // POST /api/session/debug — manually set fields (for testing without AI)
 // Body: { fields: { fullName: "...", age: "32", ... } }

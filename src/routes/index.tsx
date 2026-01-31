@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import type { Env } from '../types'
+import type { Env } from '@/types'
 
 export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
   const user = c.get('user')

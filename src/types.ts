@@ -17,6 +17,19 @@ export type User = {
   role: string
 }
 
+export type ValidationResult = { success: boolean; data: any; error: any }
+export type ValidationTarget = 'json' | 'form' | 'query' | 'param' | 'header' | 'cookie'
+export type ValidationResults = {
+  [K in `validationResult_${ValidationTarget}`]?: ValidationResult
+}
+
+export type HonoContext = {
+  Variables: {
+    user: User | null
+  } & ValidationResults
+  Bindings: Env
+}
+
 declare module 'hono' {
   interface ContextRenderer {
     (content: string | Promise<string>, props?: { title?: string }): Response

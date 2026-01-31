@@ -12,8 +12,9 @@
   "dependencies": {
     "@ai-sdk/google": "^1",
     "ai": "^4",
+    "drizzle-orm": "^0.38",
     "hono": "^4",
-    "drizzle-orm": "^0.38"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4",

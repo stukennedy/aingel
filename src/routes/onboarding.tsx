@@ -1,6 +1,6 @@
 import type { Context } from 'hono'
 import { html } from 'hono/html'
-import type { Env } from '../types'
+import type { Env } from '@/types'
 
 export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
   const user = c.get('user')
@@ -15,7 +15,7 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
             <span class="text-secondary text-sm">{user.name}</span>
             <button
               class="btn btn-ghost btn-sm"
-              data-on-click="@post('/api/auth/logout')"
+              hx-post="/api/auth/logout"
             >
               Sign Out
             </button>
@@ -39,13 +39,7 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
           </div>
 
           {/* Error display */}
-          <div
-            id="form-error"
-            data-signals={`{formError:'', submitting:false, submitted:false}`}
-            data-show="$formError"
-            class="form-error-banner"
-            data-text="$formError"
-          ></div>
+          <div id="form-error" class="form-error-banner"></div>
 
           {/* Onboarding form */}
           <div style="margin-top: 3rem; text-align: left;">
@@ -59,7 +53,11 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
                   type="text"
                   name="fullName"
                   placeholder="Your full name"
-                  data-on-change={`@post('/api/session/form', {field: 'fullName', value: evt.target.value})`}
+                  hx-post="/api/session/form"
+                  hx-trigger="change"
+                  hx-target="#save-fullName"
+                  hx-swap="outerHTML"
+                  hx-vals='{"field": "fullName"}'
                 />
                 <span id="save-fullName" class="save-indicator"></span>
               </div>
@@ -71,7 +69,11 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
                   type="email"
                   name="email"
                   value={user.email}
-                  data-on-change={`@post('/api/session/form', {field: 'email', value: evt.target.value})`}
+                  hx-post="/api/session/form"
+                  hx-trigger="change"
+                  hx-target="#save-email"
+                  hx-swap="outerHTML"
+                  hx-vals='{"field": "email"}'
                 />
                 <span id="save-email" class="save-indicator"></span>
               </div>
@@ -83,7 +85,11 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
                   type="tel"
                   name="phone"
                   placeholder="Your phone number"
-                  data-on-change={`@post('/api/session/form', {field: 'phone', value: evt.target.value})`}
+                  hx-post="/api/session/form"
+                  hx-trigger="change"
+                  hx-target="#save-phone"
+                  hx-swap="outerHTML"
+                  hx-vals='{"field": "phone"}'
                 />
                 <span id="save-phone" class="save-indicator"></span>
               </div>
@@ -95,7 +101,11 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
                   type="number"
                   name="age"
                   placeholder="Your age"
-                  data-on-change={`@post('/api/session/form', {field: 'age', value: evt.target.value})`}
+                  hx-post="/api/session/form"
+                  hx-trigger="change"
+                  hx-target="#save-age"
+                  hx-swap="outerHTML"
+                  hx-vals='{"field": "age"}'
                 />
                 <span id="save-age" class="save-indicator"></span>
               </div>
@@ -107,7 +117,11 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
                   type="text"
                   name="physical"
                   placeholder="Any conditions or notes..."
-                  data-on-change={`@post('/api/session/form', {field: 'physical', value: evt.target.value})`}
+                  hx-post="/api/session/form"
+                  hx-trigger="change"
+                  hx-target="#save-physical"
+                  hx-swap="outerHTML"
+                  hx-vals='{"field": "physical"}'
                 />
                 <span id="save-physical" class="save-indicator"></span>
               </div>
@@ -119,7 +133,11 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
                   type="text"
                   name="mental"
                   placeholder="How are you feeling?"
-                  data-on-change={`@post('/api/session/form', {field: 'mental', value: evt.target.value})`}
+                  hx-post="/api/session/form"
+                  hx-trigger="change"
+                  hx-target="#save-mental"
+                  hx-swap="outerHTML"
+                  hx-vals='{"field": "mental"}'
                 />
                 <span id="save-mental" class="save-indicator"></span>
               </div>
@@ -131,8 +149,9 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
               <div id="submit-status"></div>
               <button
                 class="btn btn-primary btn-lg"
-                data-on-click={`@post('/api/session/submit')`}
-                data-attr-disabled="$submitting"
+                hx-post="/api/session/submit"
+                hx-target="#submit-status"
+                hx-swap="innerHTML"
               >
                 ✨ Save Profile
               </button>
@@ -194,10 +213,9 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
           padding: 0.75rem 1rem;
           border-radius: 0.5rem;
           margin-bottom: 1rem;
-          display: none;
         }
-        .form-error-banner[data-show] {
-          display: block;
+        .form-error-banner:empty {
+          display: none;
         }
         .required {
           color: var(--rose, #c75050);

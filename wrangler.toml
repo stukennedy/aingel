@@ -9,7 +9,8 @@ directory = "./public"
 [[d1_databases]]
 binding = "DB"
 database_name = "aingel-db"
-database_id = "placeholder"
+database_id = "df56b663-7f6f-439f-97d8-342faf158f13"
+migrations_dir = "./drizzle"
 
 [[kv_namespaces]]
 binding = "SESSIONS"

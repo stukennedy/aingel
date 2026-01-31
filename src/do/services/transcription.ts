@@ -1,4 +1,4 @@
-import { connectWebSocketUpgrade } from '../../utils/ws-upgrade';
+import { connectWebSocketUpgrade } from '@/utils/ws-upgrade';
 
 export interface TranscriptionCallbacks {
   onTranscript: (text: string, isFinal: boolean, turnOrder: number) => void;
