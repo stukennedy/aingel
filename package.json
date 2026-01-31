@@ -1,0 +1,23 @@
+{
+  "name": "aingel-cf",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "routes": "bunx hono-router src/routes src/router.ts --watch",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "wrangler d1 migrations apply aingel-db --local",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4",
+    "drizzle-orm": "^0.38"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4",
+    "drizzle-kit": "^0.30",
+    "hono-router": "latest",
+    "typescript": "^5",
+    "wrangler": "^3"
+  }
+}
