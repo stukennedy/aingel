@@ -4,6 +4,10 @@ export type Env = {
   SESSION_DO: DurableObjectNamespace
   ANAM_API_KEY: string
   ANAM_API_URL: string
+  DEEPGRAM_API_KEY: string
+  GEMINI_AI_API_KEY: string
+  ANAM_AVATAR_ID?: string
+  ANAM_VOICE_ID?: string
 }
 
 export type User = {

@@ -26,3 +26,6 @@ new_classes = ["SessionDO"]
 
 [vars]
 ANAM_API_URL = "https://api.anam.ai"
+# Set these as secrets: wrangler secret put DEEPGRAM_API_KEY / GEMINI_AI_API_KEY / ANAM_API_KEY
+# DEEPGRAM_API_KEY = ""
+# GEMINI_AI_API_KEY = ""

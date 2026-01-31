@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/google": "^1",
+    "ai": "^4",
     "hono": "^4",
     "drizzle-orm": "^0.38"
   },

@@ -1,4 +1,5 @@
 import type { Context } from 'hono'
+import { html } from 'hono/html'
 import type { Env } from '../types'
 
 export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
@@ -33,53 +34,186 @@ export const onRequestGet = (c: Context<{ Bindings: Env }>) => {
             </h1>
             <p class="text-secondary" style="font-size: 1.1rem; max-width: 480px; margin: 0 auto; line-height: 1.7;">
               I'm Aíngel, your companion. Let's get to know each other.
-              When you're ready, we'll start a conversation and I'll help you 
-              get set up — just by talking.
+              Fill in your profile below, and we'll be on our way.
             </p>
           </div>
 
-          <div style="margin-top: 3rem;">
-            <button class="btn btn-primary btn-lg" disabled style="opacity: 0.5; cursor: not-allowed;">
-              🎙️ Start Voice Session
-              <span class="text-xs" style="margin-left: 0.5rem; opacity: 0.7;">(Coming soon)</span>
-            </button>
-            <p class="text-muted text-sm" style="margin-top: 1rem;">
-              Voice pipeline powered by Cloudflare Durable Objects · Deepgram ASR · Gemini Flash
-            </p>
-          </div>
+          {/* Error display */}
+          <div
+            id="form-error"
+            data-signals={`{formError:'', submitting:false, submitted:false}`}
+            data-show="$formError"
+            class="form-error-banner"
+            data-text="$formError"
+          ></div>
 
-          {/* Onboarding form preview - will be populated by voice */}
-          <div style="margin-top: 4rem; text-align: left;">
+          {/* Onboarding form */}
+          <div style="margin-top: 3rem; text-align: left;">
             <h3 style="margin-bottom: 1.5rem; color: var(--text-secondary);">Your Profile</h3>
             <div id="onboarding-form" class="card" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+
               <div class="form-group">
-                <label class="form-label">Full Name</label>
-                <input class="form-input" type="text" id="field-fullName" placeholder="Filled by voice..." readonly />
+                <label class="form-label">Full Name <span class="required">*</span></label>
+                <input
+                  class="form-input"
+                  type="text"
+                  name="fullName"
+                  placeholder="Your full name"
+                  data-on-change={`@post('/api/session/form', {field: 'fullName', value: evt.target.value})`}
+                />
+                <span id="save-fullName" class="save-indicator"></span>
               </div>
+
               <div class="form-group">
                 <label class="form-label">Email</label>
-                <input class="form-input" type="email" id="field-email" value={user.email} readonly />
+                <input
+                  class="form-input"
+                  type="email"
+                  name="email"
+                  value={user.email}
+                  data-on-change={`@post('/api/session/form', {field: 'email', value: evt.target.value})`}
+                />
+                <span id="save-email" class="save-indicator"></span>
               </div>
+
               <div class="form-group">
                 <label class="form-label">Phone</label>
-                <input class="form-input" type="tel" id="field-phone" placeholder="Filled by voice..." readonly />
+                <input
+                  class="form-input"
+                  type="tel"
+                  name="phone"
+                  placeholder="Your phone number"
+                  data-on-change={`@post('/api/session/form', {field: 'phone', value: evt.target.value})`}
+                />
+                <span id="save-phone" class="save-indicator"></span>
               </div>
+
               <div class="form-group">
                 <label class="form-label">Age</label>
-                <input class="form-input" type="text" id="field-age" placeholder="Filled by voice..." readonly />
+                <input
+                  class="form-input"
+                  type="number"
+                  name="age"
+                  placeholder="Your age"
+                  data-on-change={`@post('/api/session/form', {field: 'age', value: evt.target.value})`}
+                />
+                <span id="save-age" class="save-indicator"></span>
               </div>
+
               <div class="form-group">
                 <label class="form-label">Physical Health</label>
-                <input class="form-input" type="text" id="field-physical" placeholder="Filled by voice..." readonly />
+                <input
+                  class="form-input"
+                  type="text"
+                  name="physical"
+                  placeholder="Any conditions or notes..."
+                  data-on-change={`@post('/api/session/form', {field: 'physical', value: evt.target.value})`}
+                />
+                <span id="save-physical" class="save-indicator"></span>
               </div>
+
               <div class="form-group">
                 <label class="form-label">Emotional Wellbeing</label>
-                <input class="form-input" type="text" id="field-mental" placeholder="Filled by voice..." readonly />
+                <input
+                  class="form-input"
+                  type="text"
+                  name="mental"
+                  placeholder="How are you feeling?"
+                  data-on-change={`@post('/api/session/form', {field: 'mental', value: evt.target.value})`}
+                />
+                <span id="save-mental" class="save-indicator"></span>
               </div>
+
+            </div>
+
+            {/* Submit area */}
+            <div style="margin-top: 2rem; text-align: center;">
+              <div id="submit-status"></div>
+              <button
+                class="btn btn-primary btn-lg"
+                data-on-click={`@post('/api/session/submit')`}
+                data-attr-disabled="$submitting"
+              >
+                ✨ Save Profile
+              </button>
             </div>
           </div>
+
+          {/* Voice session area */}
+          <div style="margin-top: 2rem;">
+            <video id="anam-video" style="display: none; width: 320px; height: 320px; border-radius: 1rem; margin: 0 auto 1rem; object-fit: cover;" autoplay playsinline></video>
+
+            <div style="display: flex; gap: 0.75rem; justify-content: center;">
+              <button id="voice-start-btn" class="btn btn-primary btn-lg" onclick="window.__startVoice()">
+                🎙️ Start Voice Session
+              </button>
+              <button id="voice-stop-btn" class="btn btn-ghost btn-lg" style="display: none;" onclick="window.__stopVoice()">
+                ⏹ Stop
+              </button>
+            </div>
+
+            <p id="voice-status" class="text-muted text-sm" style="margin-top: 0.75rem;">
+              Voice pipeline powered by Cloudflare Durable Objects · Deepgram ASR · Gemini Flash
+            </p>
+
+            <div id="voice-transcript" style="display: none; margin-top: 1rem; max-height: 200px; overflow-y: auto; text-align: left; background: rgba(0,0,0,0.05); border-radius: 0.5rem; padding: 0.75rem; font-size: 0.9rem; line-height: 1.6;"></div>
+          </div>
+
+          {html`<script type="module">
+            import { start, stop, isRunning } from '/js/anam-session.js';
+            window.__startVoice = async () => {
+              document.getElementById('voice-start-btn').style.display = 'none';
+              document.getElementById('voice-stop-btn').style.display = 'inline-flex';
+              document.getElementById('voice-transcript').style.display = 'block';
+              await start();
+            };
+            window.__stopVoice = () => {
+              stop();
+              document.getElementById('voice-start-btn').style.display = 'inline-flex';
+              document.getElementById('voice-stop-btn').style.display = 'none';
+            };
+          </script>`}
         </div>
       </div>
+
+      {html`<style>
+        .save-indicator {
+          display: inline-block;
+          font-size: 0.75rem;
+          color: var(--sage, #6b8f71);
+          opacity: 0;
+          transition: opacity 0.3s ease;
+          margin-left: 0.5rem;
+        }
+        .save-indicator.visible {
+          opacity: 1;
+        }
+        .form-error-banner {
+          background: var(--rose-soft, rgba(220,80,80,0.1));
+          color: var(--rose, #c75050);
+          padding: 0.75rem 1rem;
+          border-radius: 0.5rem;
+          margin-bottom: 1rem;
+          display: none;
+        }
+        .form-error-banner[data-show] {
+          display: block;
+        }
+        .required {
+          color: var(--rose, #c75050);
+        }
+        .submit-success {
+          background: var(--sage-soft, rgba(107,143,113,0.1));
+          color: var(--sage, #6b8f71);
+          padding: 1rem;
+          border-radius: 0.5rem;
+          margin-bottom: 1rem;
+          font-weight: 500;
+        }
+        .form-group {
+          position: relative;
+        }
+      </style>`}
     </>,
     { title: 'Onboarding — Aíngel' }
   )

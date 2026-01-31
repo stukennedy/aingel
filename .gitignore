@@ -1,1 +1,5 @@
-node_modules/\n.wrangler/\ndist/\n.dev.vars
+node_modules/
+.wrangler/
+dist/
+.dev.vars
+package-lock.json
